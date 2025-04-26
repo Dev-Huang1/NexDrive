@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth, useUser, SignOutButton } from "@clerk/nextjs"
 import { Button } from "@/components/ui/button"
@@ -19,7 +19,9 @@ import {
   File, 
   MoreVertical, 
   Loader2,
-  LogOut
+  LogOut,
+  Download,
+  Folder
 } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
@@ -37,7 +39,18 @@ import {
   DialogTitle,
   DialogFooter,
   DialogTrigger,
+  DialogDescription,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 // Types for our files and folders
 interface FileItem {
@@ -75,10 +88,11 @@ function NavItem({ href, icon, children, active, onClick }: {
   )
 }
 
-function FileRow({ file, onDelete, onRename }: { 
+function FileRow({ file, onDelete, onRename, onDownload }: { 
   file: FileItem; 
   onDelete: (file: FileItem) => void;
   onRename: (file: FileItem, newName: string) => void;
+  onDownload: (file: FileItem) => void;
 }) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [newName, setNewName] = useState(file.name);
@@ -122,9 +136,9 @@ function FileRow({ file, onDelete, onRename }: {
             <Button size="sm" variant="ghost" onClick={() => setIsRenaming(false)}>Cancel</Button>
           </div>
         ) : (
-          <a href={file.url} target="_blank" rel="noopener noreferrer" className="hover:underline">
+          <span className="hover:underline cursor-pointer" onClick={() => window.open(file.url, '_blank')}>
             {file.name}
-          </a>
+          </span>
         )}
       </div>
       <div className="flex items-center gap-12">
@@ -137,6 +151,10 @@ function FileRow({ file, onDelete, onRename }: {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => onDownload(file)}>
+              <Download className="h-4 w-4 mr-2" />
+              Download
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => setIsRenaming(true)}>
               <Edit2 className="h-4 w-4 mr-2" />
               Rename
@@ -153,36 +171,68 @@ function FileRow({ file, onDelete, onRename }: {
   );
 }
 
-function FolderRow({ folder, currentPath, onNavigate }: { 
+function FolderRow({ folder, currentPath, onNavigate, onDelete, onRename }: { 
   folder: FolderItem; 
   currentPath: string;
   onNavigate: (path: string) => void;
+  onDelete: (folder: FolderItem) => void;
+  onRename: (folder: FolderItem, newName: string) => void;
 }) {
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [newName, setNewName] = useState(folder.name);
+
+  const handleRename = () => {
+    onRename(folder, newName);
+    setIsRenaming(false);
+  };
+
   return (
-    <div 
-      className="flex items-center justify-between p-3 border-b hover:bg-gray-50 cursor-pointer"
-      onClick={() => onNavigate(folder.path)}
-    >
-      <div className="flex items-center gap-3 flex-1">
-        <svg className="w-4 h-4 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-          />
-        </svg>
-        <span>{folder.name}</span>
+    <div className="flex items-center justify-between p-3 border-b hover:bg-gray-50">
+      <div className="flex items-center gap-3 flex-1" onClick={() => !isRenaming && onNavigate(folder.path)}>
+        <Folder className="h-4 w-4 text-yellow-500" />
+        {isRenaming ? (
+          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            <Input 
+              value={newName} 
+              onChange={(e) => setNewName(e.target.value)}
+              className="h-8"
+            />
+            <Button size="sm" onClick={handleRename}>Save</Button>
+            <Button size="sm" variant="ghost" onClick={() => setIsRenaming(false)}>Cancel</Button>
+          </div>
+        ) : (
+          <span className="cursor-pointer">{folder.name}</span>
+        )}
       </div>
-      <div className="flex-1"></div>
+      <div className="flex items-center">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+            <Button variant="ghost" size="icon">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setIsRenaming(true)}>
+              <Edit2 className="h-4 w-4 mr-2" />
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-red-600" onClick={() => onDelete(folder)}>
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }
 
-function ImageCard({ file, onDelete, onRename }: { 
+function ImageCard({ file, onDelete, onRename, onDownload }: { 
   file: FileItem; 
   onDelete: (file: FileItem) => void;
   onRename: (file: FileItem, newName: string) => void;
+  onDownload: (file: FileItem) => void;
 }) {
   return (
     <div className="group relative overflow-hidden rounded-lg border bg-white">
@@ -193,6 +243,7 @@ function ImageCard({ file, onDelete, onRename }: {
           width={400}
           height={300}
           className="h-full w-full object-cover transition-transform group-hover:scale-105"
+          onClick={() => window.open(file.url, '_blank')}
         />
       </div>
       <div className="p-4 flex justify-between items-center">
@@ -207,9 +258,14 @@ function ImageCard({ file, onDelete, onRename }: {
             <DropdownMenuItem onClick={() => window.open(file.url, '_blank')}>
               View
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => {
-              const newName = prompt("Enter new name:", file.name);
-              if (newName) onRename(file, newName);
+            <DropdownMenuItem onClick={() => onDownload(file)}>
+              <Download className="h-4 w-4 mr-2" />
+              Download
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={(e) => {
+              e.preventDefault();
+              const dialog = document.getElementById(`rename-file-dialog-${file.id}`) as HTMLDialogElement;
+              if (dialog) dialog.showModal();
             }}>
               <Edit2 className="h-4 w-4 mr-2" />
               Rename
@@ -222,6 +278,40 @@ function ImageCard({ file, onDelete, onRename }: {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      
+      {/* Rename Dialog - Hidden by default */}
+      <Dialog id={`rename-file-dialog-${file.id}`}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename File</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input 
+              id={`rename-input-${file.id}`}
+              defaultValue={file.name}
+              placeholder="Enter new name"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              const dialog = document.getElementById(`rename-file-dialog-${file.id}`) as HTMLDialogElement;
+              if (dialog) dialog.close();
+            }}>
+              Cancel
+            </Button>
+            <Button onClick={() => {
+              const input = document.getElementById(`rename-input-${file.id}`) as HTMLInputElement;
+              if (input && input.value) {
+                onRename(file, input.value);
+                const dialog = document.getElementById(`rename-file-dialog-${file.id}`) as HTMLDialogElement;
+                if (dialog) dialog.close();
+              }
+            }}>
+              Rename
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -240,6 +330,13 @@ export default function CloudDrive() {
   const [newFolderModalOpen, setNewFolderModalOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
+  const [confirmDeleteDialogOpen, setConfirmDeleteDialogOpen] = useState(false);
+  const [itemToDelete, setItemToDelete] = useState<FileItem | FolderItem | null>(null);
+  const [isItemToDeleteFolder, setIsItemToDeleteFolder] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [itemToRename, setItemToRename] = useState<FileItem | FolderItem | null>(null);
+  const [isItemToRenameFolder, setIsItemToRenameFolder] = useState(false);
+  const [newItemName, setNewItemName] = useState("");
   
   // Redirect if not signed in
   useEffect(() => {
@@ -378,47 +475,136 @@ export default function CloudDrive() {
     }
   };
 
-  const handleDeleteFile = async (file: FileItem) => {
-    if (!confirm(`Are you sure you want to delete "${file.name}"?`)) return;
+  const openDeleteConfirmation = (item: FileItem | FolderItem, isFolder: boolean) => {
+    setItemToDelete(item);
+    setIsItemToDeleteFolder(isFolder);
+    setConfirmDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirmed = async () => {
+    if (!itemToDelete) return;
     
     try {
-      const response = await fetch(`/api/files?fileId=${encodeURIComponent(file.id)}`, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to delete file');
+      if (isItemToDeleteFolder) {
+        // Delete folder
+        const folder = itemToDelete as FolderItem;
+        const response = await fetch(`/api/folders?folderId=${encodeURIComponent(folder.id)}`, {
+          method: 'DELETE',
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to delete folder');
+        }
+      } else {
+        // Delete file
+        const file = itemToDelete as FileItem;
+        const response = await fetch(`/api/files?fileId=${encodeURIComponent(file.id)}`, {
+          method: 'DELETE',
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to delete file');
+        }
       }
       
       fetchFilesAndFolders();
     } catch (error) {
-      console.error('Error deleting file:', error);
+      console.error('Error deleting item:', error);
+    } finally {
+      setConfirmDeleteDialogOpen(false);
+      setItemToDelete(null);
     }
   };
 
-  const handleRenameFile = async (file: FileItem, newName: string) => {
+  const openRenameDialog = (item: FileItem | FolderItem, isFolder: boolean) => {
+    setItemToRename(item);
+    setIsItemToRenameFolder(isFolder);
+    setNewItemName(isFolder ? (item as FolderItem).name : (item as FileItem).name);
+    setRenameDialogOpen(true);
+  };
+
+  const handleRenameConfirmed = async () => {
+    if (!itemToRename || !newItemName.trim()) return;
+    
     try {
-      const response = await fetch(`/api/files`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fileId: file.id,
-          newName
-        }),
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to rename file');
+      if (isItemToRenameFolder) {
+        // Rename folder
+        const folder = itemToRename as FolderItem;
+        const response = await fetch(`/api/folders`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            folderId: folder.id,
+            newName: newItemName
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to rename folder');
+        }
+      } else {
+        // Rename file
+        const file = itemToRename as FileItem;
+        const response = await fetch(`/api/files`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            fileId: file.id,
+            newName: newItemName
+          }),
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to rename file');
+        }
       }
       
       fetchFilesAndFolders();
     } catch (error) {
-      console.error('Error renaming file:', error);
+      console.error('Error renaming item:', error);
+    } finally {
+      setRenameDialogOpen(false);
+      setItemToRename(null);
+      setNewItemName("");
     }
+  };
+
+  const handleDownloadFile = (file: FileItem) => {
+    // 使用下载API而不是直接链接
+    window.location.href = `/api/download?fileId=${encodeURIComponent(file.id)}`;
+    
+    // 也可以使用fetch API下载并使用Blob
+    /*
+    fetch(`/api/download?fileId=${encodeURIComponent(file.id)}`)
+      .then(response => response.blob())
+      .then(blob => {
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      })
+      .catch(error => {
+        console.error('Download failed:', error);
+        toast({
+          title: "Download Failed",
+          description: "Failed to download file. Please try again.",
+          variant: "destructive"
+        });
+      });
+    */
   };
 
   const handleNavigate = (path: string) => {
@@ -582,8 +768,8 @@ export default function CloudDrive() {
                     </div>
                   )}
                 </div>
-              </DialogContent>
-            </Dialog>
+                </DialogContent>
+              </Dialog>
 
             <Dialog open={newFolderModalOpen} onOpenChange={setNewFolderModalOpen}>
               <DialogTrigger asChild>
@@ -683,6 +869,13 @@ export default function CloudDrive() {
                       folder={folder} 
                       currentPath={currentPath}
                       onNavigate={handleNavigate}
+                      onDelete={() => openDeleteConfirmation(folder, true)}
+                      onRename={(folder, newName) => {
+                        setItemToRename(folder);
+                        setIsItemToRenameFolder(true);
+                        setNewItemName(newName);
+                        handleRenameConfirmed();
+                      }}
                     />
                   ))}
                   
@@ -691,8 +884,14 @@ export default function CloudDrive() {
                     <FileRow 
                       key={file.id} 
                       file={file} 
-                      onDelete={handleDeleteFile}
-                      onRename={handleRenameFile}
+                      onDelete={() => openDeleteConfirmation(file, false)}
+                      onRename={(file, newName) => {
+                        setItemToRename(file);
+                        setIsItemToRenameFolder(false);
+                        setNewItemName(newName);
+                        handleRenameConfirmed();
+                      }}
+                      onDownload={handleDownloadFile}
                     />
                   ))}
                   
@@ -709,8 +908,14 @@ export default function CloudDrive() {
                       <ImageCard 
                         key={file.id} 
                         file={file} 
-                        onDelete={handleDeleteFile}
-                        onRename={handleRenameFile}
+                        onDelete={() => openDeleteConfirmation(file, false)}
+                        onRename={(file, newName) => {
+                          setItemToRename(file);
+                          setIsItemToRenameFolder(false);
+                          setNewItemName(newName);
+                          handleRenameConfirmed();
+                        }}
+                        onDownload={handleDownloadFile}
                       />
                     ))
                   ) : (
@@ -724,6 +929,47 @@ export default function CloudDrive() {
           )}
         </div>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={confirmDeleteDialogOpen} onOpenChange={setConfirmDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete {isItemToDeleteFolder ? 'the folder' : 'this file'}
+              {itemToDelete ? ` "${isItemToDeleteFolder ? (itemToDelete as FolderItem).name : (itemToDelete as FileItem).name}"` : ''}.
+              {isItemToDeleteFolder && ' All contents inside this folder will also be deleted.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" onClick={handleDeleteConfirmed}>
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Rename Dialog */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename {isItemToRenameFolder ? 'Folder' : 'File'}</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <Input 
+              placeholder={`Enter new name for ${isItemToRenameFolder ? 'folder' : 'file'}`}
+              value={newItemName}
+              onChange={(e) => setNewItemName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleRenameConfirmed()}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleRenameConfirmed}>Rename</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
