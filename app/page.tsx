@@ -375,11 +375,6 @@ export default function CloudDrive() {
       fetchFilesAndFolders();
     } catch (error) {
       console.error('Error initializing user drive:', error);
-      toast({
-        title: "Initialization Error",
-        description: "Failed to setup your cloud drive. Please try again.",
-        variant: "destructive"
-      });
     }
   };
 

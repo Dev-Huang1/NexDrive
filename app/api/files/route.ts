@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { cookies } from 'next/headers';
+import { MisskeyFileUploadResult } from '@/types/misskey';
 
 // 定义类型
 interface MisskeyFile {
