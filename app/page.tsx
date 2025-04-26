@@ -357,22 +357,17 @@ export default function CloudDrive() {
   const fetchFilesAndFolders = async () => {
     setIsLoading(true);
     try {
-      // Ensure we're using the correct bucket path structure
-      const bucketPath = `bucket/${userId}${currentPath === '/' ? '/' : currentPath}`;
-      
-      // Fetch data from API
-      const response = await fetch(`/api/files?path=${encodeURIComponent(bucketPath)}&view=${currentView}`);
+      // 直接传递客户端路径，后端会处理完整路径
+      const response = await fetch(`/api/files?path=${encodeURIComponent(currentPath)}&view=${currentView}`);
       if (!response.ok) throw new Error('Failed to fetch files');
       
       const data = await response.json();
       
-      // Make sure we handle file filtering correctly
+      // 处理数据相同
       if (currentView === 'images') {
-        // In images view, only show images
         setFiles(data.files.filter((file: FileItem) => file.type.startsWith('image/')));
-        setFolders([]); // No folders in image view
+        setFolders([]);
       } else {
-        // In all files view, show everything
         setFiles(data.files || []);
         setFolders(data.folders || []);
       }
@@ -452,14 +447,14 @@ export default function CloudDrive() {
     if (!newFolderName.trim()) return;
     
     try {
-      // Ensure folder creation uses the correct bucket path
+      // 直接使用当前客户端路径，API会处理真实路径
       const response = await fetch('/api/folders', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          path: `bucket/${userId}${currentPath}`,
+          path: currentPath,
           name: newFolderName,
         }),
       });
@@ -610,7 +605,8 @@ export default function CloudDrive() {
   };
 
   const handleNavigate = (path: string) => {
-    setCurrentPath(path);
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    setCurrentPath(normalizedPath);
   };
 
   const navigateUp = () => {
@@ -618,7 +614,7 @@ export default function CloudDrive() {
     
     const parts = currentPath.split('/').filter(Boolean);
     parts.pop();
-    const newPath = parts.length === 0 ? '/' : '/' + parts.join('/') + '/';
+    const newPath = parts.length === 0 ? '/' : `/${parts.join('/')}`;
     setCurrentPath(newPath);
   };
 

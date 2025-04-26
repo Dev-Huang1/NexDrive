@@ -29,18 +29,25 @@ export async function GET(request: NextRequest) {
     }
 
     const searchParams = request.nextUrl.searchParams;
-    const path = searchParams.get('path') || `bucket/${userId}/`;
+    // 这里不要在客户端传入的路径上添加额外的 bucket/userId 前缀
+    let path = searchParams.get('path') || '/';
     const view = searchParams.get('view') || 'all';
+    
+    // 如果路径是根路径 '/'，则实际使用的是 bucket/userId
+    // 其他情况，直接使用传入的路径（确保安全）
+    const actualPath = path === '/' 
+      ? `bucket/${userId}`
+      : path;
 
-    // Validate that user can only access their own folder
-    if (!path.startsWith(`bucket/${userId}/`)) {
+    // 验证用户只能访问他们自己的文件夹
+    if (!actualPath.startsWith(`bucket/${userId}`)) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
 
-    // Get files from Misskey
-    const missKeyFiles = await getFilesFromMisskey(path, view);
-
-    // Process files and folders
+    // 获取files和folders时使用actualPath
+    const missKeyFiles = await getFilesFromMisskey(actualPath, view);
+    
+    // 处理文件
     const files = missKeyFiles.map((file: MisskeyFile) => ({
       id: file.id,
       name: file.name,
@@ -51,12 +58,16 @@ export async function GET(request: NextRequest) {
       thumbnailUrl: file.thumbnailUrl
     }));
 
-    // 获取文件夹信息
-    const missFolders = await getMissFolders(path);
+    // 获取文件夹
+    const missFolders = await getMissFolders(actualPath);
     const folders = missFolders.map((folder: MisskeyFolder) => ({
       id: folder.id,
       name: folder.name,
-      path: folder.parentId ? `${path}${folder.name}/` : `/${folder.name}/`
+      // 这里使用客户端的路径格式，即如果客户端的路径是 /，
+      // 实际路径是 bucket/userId，但对客户端来说，新文件夹路径应该是 /foldername
+      path: path === '/' 
+        ? `/${folder.name}`
+        : `${path}/${folder.name}`
     }));
 
     return NextResponse.json({ files, folders });

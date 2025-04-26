@@ -29,10 +29,10 @@ export async function POST(request: NextRequest) {
 
     const { path, name } = await request.json() as CreateFolderRequest;
 
-    // 验证用户只能在他们自己的目录中创建文件夹
-    if (!path.startsWith(`bucket/${userId}/`)) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
-    }
+    // 处理真实路径
+    const actualPath = path === '/' 
+      ? `bucket/${userId}` 
+      : `bucket/${userId}${path}`;
 
     const baseUrl = process.env.MISSKEY_BASE_URL;
     const token = process.env.MISSKEY_TOKEN;
@@ -42,9 +42,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 获取父文件夹ID
-    const parentFolderId = await getFolderIdFromPath(path);
+    const parentFolderId = await getFolderIdFromPath(actualPath);
     
-    // 在Misskey中创建文件夹
     const response = await fetch(`${baseUrl}/api/drive/folders/create`, {
       method: 'POST',
       headers: {
@@ -67,13 +66,12 @@ export async function POST(request: NextRequest) {
       folder: {
         id: folder.id,
         name: folder.name,
-        path: `${path}${folder.name}/`
+        // 返回给客户端的路径应使用客户端路径格式
+        path: path === '/' ? `/${name}` : `${path}/${name}`
       } 
     });
   } catch (error) {
-    console.error('Error creating folder:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    console.error(error)
   }
 }
 
