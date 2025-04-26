@@ -234,6 +234,19 @@ function ImageCard({ file, onDelete, onRename, onDownload }: {
   onRename: (file: FileItem, newName: string) => void;
   onDownload: (file: FileItem) => void;
 }) {
+  // 添加一个状态来控制重命名对话框是否显示
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  // 添加一个状态存储新文件名
+  const [newFileName, setNewFileName] = useState(file.name);
+
+  // 处理重命名确认
+  const handleRenameConfirm = () => {
+    if (newFileName.trim()) {
+      onRename(file, newFileName);
+      setRenameDialogOpen(false);
+    }
+  };
+
   return (
     <div className="group relative overflow-hidden rounded-lg border bg-white">
       <div className="aspect-[4/3] overflow-hidden">
@@ -262,10 +275,9 @@ function ImageCard({ file, onDelete, onRename, onDownload }: {
               <Download className="h-4 w-4 mr-2" />
               Download
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={(e) => {
-              e.preventDefault();
-              const dialog = document.getElementById(`rename-file-dialog-${file.id}`) as HTMLDialogElement;
-              if (dialog) dialog.showModal();
+            <DropdownMenuItem onClick={() => {
+              setNewFileName(file.name);
+              setRenameDialogOpen(true);
             }}>
               <Edit2 className="h-4 w-4 mr-2" />
               Rename
@@ -279,34 +291,24 @@ function ImageCard({ file, onDelete, onRename, onDownload }: {
         </DropdownMenu>
       </div>
       
-      {/* Rename Dialog - Hidden by default */}
-      <Dialog id={`rename-file-dialog-${file.id}`}>
+      {/* 重命名对话框 - 使用状态控制显示/隐藏 */}
+      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Rename File</DialogTitle>
           </DialogHeader>
           <div className="py-4">
             <Input 
-              id={`rename-input-${file.id}`}
-              defaultValue={file.name}
+              value={newFileName}
+              onChange={(e) => setNewFileName(e.target.value)}
               placeholder="Enter new name"
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => {
-              const dialog = document.getElementById(`rename-file-dialog-${file.id}`) as HTMLDialogElement;
-              if (dialog) dialog.close();
-            }}>
+            <Button variant="outline" onClick={() => setRenameDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={() => {
-              const input = document.getElementById(`rename-input-${file.id}`) as HTMLInputElement;
-              if (input && input.value) {
-                onRename(file, input.value);
-                const dialog = document.getElementById(`rename-file-dialog-${file.id}`) as HTMLDialogElement;
-                if (dialog) dialog.close();
-              }
-            }}>
+            <Button onClick={handleRenameConfirm}>
               Rename
             </Button>
           </DialogFooter>
