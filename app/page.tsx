@@ -915,8 +915,7 @@ export default function CloudDrive() {
                   {folders.map(folder => (
                     <FolderRow 
                       key={folder.id} 
-                      folder={folder} 
-                      currentPath={currentPath}
+                      folder={folder}
                       onNavigate={handleNavigate}
                       onDelete={() => openDeleteConfirmation(folder, true)}
                       onRename={(folder, newName) => {
