@@ -31,24 +31,35 @@ export function LoginForm({
     setIsLoading(true);
     setError("");
 
+    if (!signIn) {
+      setError("认证服务不可用，请稍后再试。");
+      setIsLoading(false);
+      return;
+    }
+  
     try {
       const result = await signIn.create({
         identifier: email,
         password,
       });
-
+      
       if (result.status === "complete") {
         await setActive({ session: result.createdSessionId });
         router.push("/");
       }
     } catch (err: any) {
-      setError(err.errors[0].longMessage || "Login failed. Please try again.");
+      setError(err.errors[0].longMessage || "登录失败，请重试。");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleOAuthLogin = (strategy: "oauth_google" | "oauth_microsoft" | "oauth_github") => {
+    if (!signIn) {
+      setError("认证服务不可用，请稍后再试。");
+      return;
+    }
+    
     signIn.authenticateWithRedirect({
       strategy,
       redirectUrl: "/sign-in/sso-callback",

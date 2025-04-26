@@ -48,9 +48,14 @@ export function SignUpForm({
   };
 
   const handleOAuthSignUp = (strategy: "oauth_google" | "oauth_microsoft" | "oauth_github") => {
+    if (!signUp) {
+      setError("认证服务不可用，请稍后再试。");
+      return;
+    }
+    
     signUp.authenticateWithRedirect({
       strategy,
-      redirectUrl: "/sign-up/sso-callback",
+      redirectUrl: "/sign-in/sso-callback",
       redirectUrlComplete: "/",
     });
   };
@@ -68,6 +73,11 @@ export function SignUpForm({
           return;
         }
 
+        if (!signUp) {
+          setError("注册服务不可用，请稍后再试。");
+          return;
+        }
+        
         await signUp.create({
           firstName: formData.firstName,
           lastName: formData.lastName,
@@ -77,9 +87,19 @@ export function SignUpForm({
         await signUp.prepareEmailAddressVerification();
         setStep("verification");
       } else {
+        if (!signUp) {
+          // 处理signUp不存在的情况
+          setError("验证服务不可用，请稍后再试。");
+          return;
+        }
+        
         const completeSignUp = await signUp.attemptEmailAddressVerification({
           code: formData.code,
         });
+        if (completeSignUp.status === "complete") {
+          await setActive({ session: completeSignUp.createdSessionId });
+          router.push("/");
+        };
         if (completeSignUp.status === "complete") {
           await setActive({ session: completeSignUp.createdSessionId });
           router.push("/");
