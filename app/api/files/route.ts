@@ -36,7 +36,7 @@ async function getFilesFromMisskey(path: string, view: string = 'all') {
 // GET handler to list files and folders
 export async function GET(request: NextRequest) {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
 
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
