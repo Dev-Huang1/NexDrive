@@ -1,7 +1,9 @@
+// app/api/files/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
+import { cookies } from 'next/headers';
 
-// 定义类型接口
+// 定义类型
 interface MisskeyFile {
   id: string;
   name: string;
@@ -19,7 +21,13 @@ interface MisskeyFolder {
   createdAt: string;
 }
 
-// GET handler to list files and folders
+// 定义会话状态接口
+interface DriveSession {
+  currentFolderId: string;
+  folderPath: string;
+  folderHistory: { id: string; name: string }[];
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth();
@@ -28,27 +36,86 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const searchParams = request.nextUrl.searchParams;
-    // 这里不要在客户端传入的路径上添加额外的 bucket/userId 前缀
-    let path = searchParams.get('path') || '/';
-    const view = searchParams.get('view') || 'all';
-    
-    // 如果路径是根路径 '/'，则实际使用的是 bucket/userId
-    // 其他情况，直接使用传入的路径（确保安全）
-    const actualPath = path === '/' 
-      ? `bucket/${userId}`
-      : path;
+    const baseUrl = process.env.MISSKEY_BASE_URL;
+    const token = process.env.MISSKEY_TOKEN;
 
-    // 验证用户只能访问他们自己的文件夹
-    if (!actualPath.startsWith(`bucket/${userId}`)) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    if (!baseUrl || !token) {
+      throw new Error('Misskey configuration missing');
     }
 
-    // 获取files和folders时使用actualPath
-    const missKeyFiles = await getFilesFromMisskey(actualPath, view);
+    const cookieStore = cookies();
+    const sessionCookie = cookieStore.get('drive-session');
     
-    // 处理文件
-    const files = missKeyFiles.map((file: MisskeyFile) => ({
+    // 获取查询参数
+    const searchParams = request.nextUrl.searchParams;
+    const view = searchParams.get('view') || 'all';
+    const folderId = searchParams.get('folderId');
+    const navigateUp = searchParams.get('navigateUp') === 'true';
+    
+    let session: DriveSession;
+    
+    // 如果没有会话，初始化一个新会话
+    if (!sessionCookie) {
+      // 获取用户根文件夹ID
+      const rootFolderId = await getUserRootFolderId(userId);
+      
+      // 初始化会话
+      session = {
+        currentFolderId: rootFolderId,
+        folderPath: '/',
+        folderHistory: [{ id: rootFolderId, name: 'Home' }]
+      };
+    } else {
+      session = JSON.parse(sessionCookie.value) as DriveSession;
+    }
+    
+    // 如果指定了文件夹ID，更新当前文件夹
+    if (folderId) {
+      // 获取文件夹信息
+      const folderInfo = await getFolderInfo(folderId);
+      
+      // 更新会话
+      session.currentFolderId = folderId;
+      session.folderPath = session.folderPath === '/' 
+        ? `/${folderInfo.name}` 
+        : `${session.folderPath}/${folderInfo.name}`;
+      session.folderHistory.push({ id: folderId, name: folderInfo.name });
+    }
+    
+    // 如果需要导航到上级
+    if (navigateUp && session.folderHistory.length > 1) {
+      // 移除当前文件夹
+      session.folderHistory.pop();
+      
+      // 设置当前文件夹为历史中的最后一个
+      const parentFolder = session.folderHistory[session.folderHistory.length - 1];
+      session.currentFolderId = parentFolder.id;
+      
+      // 更新路径
+      if (session.folderHistory.length === 1) {
+        session.folderPath = '/';
+      } else {
+        // 从路径中移除最后一个文件夹名
+        const pathParts = session.folderPath.split('/').filter(Boolean);
+        pathParts.pop();
+        session.folderPath = '/' + pathParts.join('/');
+      }
+    }
+    
+    // 保存会话状态到cookie
+    cookieStore.set('drive-session', JSON.stringify(session), {
+      path: '/',
+      maxAge: 24 * 60 * 60, // 1天
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production'
+    });
+    
+    // 获取当前文件夹的文件和子文件夹
+    const files = await getFolderFiles(session.currentFolderId);
+    const folders = await getFolderSubfolders(session.currentFolderId);
+    
+    // 格式化响应数据
+    const formattedFiles = files.map(file => ({
       id: file.id,
       name: file.name,
       type: file.type,
@@ -57,20 +124,18 @@ export async function GET(request: NextRequest) {
       url: file.url,
       thumbnailUrl: file.thumbnailUrl
     }));
-
-    // 获取文件夹
-    const missFolders = await getMissFolders(actualPath);
-    const folders = missFolders.map((folder: MisskeyFolder) => ({
+    
+    const formattedFolders = folders.map(folder => ({
       id: folder.id,
       name: folder.name,
-      // 这里使用客户端的路径格式，即如果客户端的路径是 /，
-      // 实际路径是 bucket/userId，但对客户端来说，新文件夹路径应该是 /foldername
-      path: path === '/' 
-        ? `/${folder.name}`
-        : `${path}/${folder.name}`
+      path: folder.name // 客户端会使用这个ID调用API来导航
     }));
-
-    return NextResponse.json({ files, folders });
+    
+    return NextResponse.json({
+      files: formattedFiles,
+      folders: formattedFolders,
+      currentPath: session.folderPath
+    });
   } catch (error) {
     console.error('Error fetching files:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
@@ -78,8 +143,8 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// 获取Misskey文件的辅助函数
-async function getFilesFromMisskey(path: string, view: string = 'all'): Promise<MisskeyFile[]> {
+// 获取用户根文件夹ID (bucket/userId)
+async function getUserRootFolderId(userId: string): Promise<string> {
   const baseUrl = process.env.MISSKEY_BASE_URL;
   const token = process.env.MISSKEY_TOKEN;
 
@@ -87,20 +152,76 @@ async function getFilesFromMisskey(path: string, view: string = 'all'): Promise<
     throw new Error('Misskey configuration missing');
   }
 
-  // 解析路径以获取正确的文件夹ID
-  const folderId = await getFolderIdFromPath(path);
-
-  // 调用Misskey API获取文件列表
-  const response = await fetch(`${baseUrl}/api/drive/files`, {
+  // 先获取bucket文件夹
+  let bucketFolderId: string | null = null;
+  
+  const bucketResponse = await fetch(`${baseUrl}/api/drive/folders/find`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       i: token,
-      folderId: folderId,
-      limit: 100,
-      type: view === 'images' ? 'image' : undefined // 如果是图片视图则按类型过滤
+      name: 'bucket',
+      parentId: null
+    }),
+  });
+
+  if (!bucketResponse.ok) {
+    throw new Error(`Misskey API error: ${bucketResponse.statusText}`);
+  }
+
+  const bucketFolders = await bucketResponse.json();
+  
+  if (bucketFolders.length === 0) {
+    throw new Error('Bucket folder not found. Please initialize first.');
+  }
+  
+  bucketFolderId = bucketFolders[0].id;
+
+  // 然后获取用户文件夹
+  const userResponse = await fetch(`${baseUrl}/api/drive/folders/find`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      i: token,
+      name: userId,
+      parentId: bucketFolderId
+    }),
+  });
+
+  if (!userResponse.ok) {
+    throw new Error(`Misskey API error: ${userResponse.statusText}`);
+  }
+
+  const userFolders = await userResponse.json();
+  
+  if (userFolders.length === 0) {
+    throw new Error('User folder not found. Please initialize first.');
+  }
+  
+  return userFolders[0].id;
+}
+
+// 获取文件夹信息
+async function getFolderInfo(folderId: string): Promise<MisskeyFolder> {
+  const baseUrl = process.env.MISSKEY_BASE_URL;
+  const token = process.env.MISSKEY_TOKEN;
+
+  if (!baseUrl || !token) {
+    throw new Error('Misskey configuration missing');
+  }
+
+  const response = await fetch(`${baseUrl}/api/drive/folders/show`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      i: token,
+      folderId
     }),
   });
 
@@ -108,12 +229,11 @@ async function getFilesFromMisskey(path: string, view: string = 'all'): Promise<
     throw new Error(`Misskey API error: ${response.statusText}`);
   }
 
-  const data = await response.json();
-  return data as MisskeyFile[];
+  return await response.json();
 }
 
-// 获取Misskey文件夹的辅助函数
-async function getMissFolders(path: string): Promise<MisskeyFolder[]> {
+// 获取文件夹内的文件
+async function getFolderFiles(folderId: string): Promise<MisskeyFile[]> {
   const baseUrl = process.env.MISSKEY_BASE_URL;
   const token = process.env.MISSKEY_TOKEN;
 
@@ -121,18 +241,14 @@ async function getMissFolders(path: string): Promise<MisskeyFolder[]> {
     throw new Error('Misskey configuration missing');
   }
 
-  // 解析路径以获取正确的父文件夹ID
-  const parentFolderId = await getFolderIdFromPath(path);
-
-  // 调用Misskey API获取文件夹列表
-  const response = await fetch(`${baseUrl}/api/drive/folders`, {
+  const response = await fetch(`${baseUrl}/api/drive/files`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
       i: token,
-      parentId: parentFolderId,
+      folderId,
       limit: 100
     }),
   });
@@ -141,15 +257,11 @@ async function getMissFolders(path: string): Promise<MisskeyFolder[]> {
     throw new Error(`Misskey API error: ${response.statusText}`);
   }
 
-  const data = await response.json();
-  return data as MisskeyFolder[];
+  return await response.json();
 }
 
-// 根据路径获取文件夹ID的辅助函数
-async function getFolderIdFromPath(path: string): Promise<string | null> {
-  // 如果是根路径，返回null（表示Misskey的根目录）
-  if (path === '/' || !path) return null;
-
+// 获取文件夹内的子文件夹
+async function getFolderSubfolders(folderId: string): Promise<MisskeyFolder[]> {
   const baseUrl = process.env.MISSKEY_BASE_URL;
   const token = process.env.MISSKEY_TOKEN;
 
@@ -157,170 +269,21 @@ async function getFolderIdFromPath(path: string): Promise<string | null> {
     throw new Error('Misskey configuration missing');
   }
 
-  // 分解路径
-  const parts = path.split('/').filter(Boolean);
-  let currentFolderId: string | null = null;
+  const response = await fetch(`${baseUrl}/api/drive/folders`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      i: token,
+      folderId,
+      limit: 100
+    }),
+  });
 
-  // 递归查找文件夹
-  for (const part of parts) {
-    const response = await fetch(`${baseUrl}/api/drive/folders/find`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        i: token,
-        name: part,
-        parentId: currentFolderId
-      }),
-    });
-
-    if (!response.ok) {
-      // 如果找不到文件夹，尝试创建它
-      if (response.status === 404) {
-        const createResponse = await fetch(`${baseUrl}/api/drive/folders/create`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            i: token,
-            name: part,
-            parentId: currentFolderId
-          }),
-        });
-
-        if (!createResponse.ok) {
-          throw new Error(`Failed to create folder '${part}'`);
-        }
-
-        const folder = await createResponse.json() as MisskeyFolder;
-        currentFolderId = folder.id;
-      } else {
-        throw new Error(`Misskey API error: ${response.statusText}`);
-      }
-    } else {
-      const folders = await response.json() as MisskeyFolder[];
-      if (folders.length === 0) {
-        // 找不到文件夹，创建一个
-        const createResponse = await fetch(`${baseUrl}/api/drive/folders/create`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            i: token,
-            name: part,
-            parentId: currentFolderId
-          }),
-        });
-
-        if (!createResponse.ok) {
-          throw new Error(`Failed to create folder '${part}'`);
-        }
-
-        const folder = await createResponse.json() as MisskeyFolder;
-        currentFolderId = folder.id;
-      } else {
-        currentFolderId = folders[0].id;
-      }
-    }
+  if (!response.ok) {
+    throw new Error(`Misskey API error: ${response.statusText}`);
   }
 
-  return currentFolderId;
-}
-
-// DELETE handler to remove a file
-export async function DELETE(request: NextRequest) {
-  try {
-    const { userId } =await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const searchParams = request.nextUrl.searchParams;
-    const fileId = searchParams.get('fileId');
-
-    if (!fileId) {
-      return NextResponse.json({ error: 'File ID is required' }, { status: 400 });
-    }
-
-    // Call Misskey API to delete file
-    const baseUrl = process.env.MISSKEY_BASE_URL;
-    const token = process.env.MISSKEY_TOKEN;
-
-    if (!baseUrl || !token) {
-      throw new Error('Misskey configuration missing');
-    }
-
-    const response = await fetch(`${baseUrl}/api/drive/files/delete`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        i: token,
-        fileId
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Misskey API error: ${response.statusText}`);
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Error deleting file:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
-  }
-}
-
-// PATCH handler to rename a file
-export async function PATCH(request: NextRequest) {
-  try {
-    const { userId } = await auth();
-
-    if (!userId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const body = await request.json();
-    const { fileId, newName } = body as { fileId: string; newName: string };
-
-    if (!fileId || !newName) {
-      return NextResponse.json({ error: 'File ID and new name are required' }, { status: 400 });
-    }
-
-    // Call Misskey API to rename file
-    const baseUrl = process.env.MISSKEY_BASE_URL;
-    const token = process.env.MISSKEY_TOKEN;
-
-    if (!baseUrl || !token) {
-      throw new Error('Misskey configuration missing');
-    }
-
-    const response = await fetch(`${baseUrl}/api/drive/files/update`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        i: token,
-        fileId,
-        name: newName
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Misskey API error: ${response.statusText}`);
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Error renaming file:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
-  }
+  return await response.json();
 }

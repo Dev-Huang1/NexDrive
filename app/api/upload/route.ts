@@ -19,6 +19,7 @@ interface MisskeyFileUploadResult {
   createdAt: string;
 }
 
+// app/api/upload/route.ts
 export async function POST(request: NextRequest) {
   try {
     const { userId } = await auth();
@@ -29,12 +30,17 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
     const files = formData.getAll('files') as File[];
-    const path = formData.get('path') as string;
-
-    // 验证用户只能上传到他们自己的文件夹
-    if (!path.startsWith(`bucket/${userId}/`)) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    
+    // 从cookie中获取当前文件夹ID
+    const cookieStore = cookies();
+    const sessionCookie = cookieStore.get('drive-session');
+    
+    if (!sessionCookie) {
+      return NextResponse.json({ error: 'Session not found' }, { status: 400 });
     }
+    
+    const session = JSON.parse(sessionCookie.value) as DriveSession;
+    const currentFolderId = session.currentFolderId;
 
     const baseUrl = process.env.MISSKEY_BASE_URL;
     const token = process.env.MISSKEY_TOKEN;
@@ -43,9 +49,6 @@ export async function POST(request: NextRequest) {
       throw new Error('Misskey configuration missing');
     }
 
-    // 获取目标文件夹ID
-    const folderId = await getFolderIdFromPath(path);
-
     const uploadResults: MisskeyFileUploadResult[] = [];
 
     for (const file of files) {
@@ -53,11 +56,7 @@ export async function POST(request: NextRequest) {
       const fileFormData = new FormData();
       fileFormData.append('i', token);
       fileFormData.append('file', file);
-      
-      // 添加folderId参数，确保文件上传到正确位置
-      if (folderId) {
-        fileFormData.append('folderId', folderId);
-      }
+      fileFormData.append('folderId', currentFolderId);
 
       // 上传到Misskey
       const response = await fetch(`${baseUrl}/api/drive/files/create`, {

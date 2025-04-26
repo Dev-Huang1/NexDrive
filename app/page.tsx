@@ -171,10 +171,9 @@ function FileRow({ file, onDelete, onRename, onDownload }: {
   );
 }
 
-function FolderRow({ folder, currentPath, onNavigate, onDelete, onRename }: { 
+function FolderRow({ folder, onNavigate, onDelete, onRename }: { 
   folder: FolderItem; 
-  currentPath: string;
-  onNavigate: (path: string) => void;
+  onNavigate: (folderId: string) => void;
   onDelete: (folder: FolderItem) => void;
   onRename: (folder: FolderItem, newName: string) => void;
 }) {
@@ -188,7 +187,7 @@ function FolderRow({ folder, currentPath, onNavigate, onDelete, onRename }: {
 
   return (
     <div className="flex items-center justify-between p-3 border-b hover:bg-gray-50">
-      <div className="flex items-center gap-3 flex-1" onClick={() => !isRenaming && onNavigate(folder.path)}>
+      <div className="flex items-center gap-3 flex-1" onClick={() => !isRenaming && onNavigate(folder.id)}>
         <Folder className="h-4 w-4 text-yellow-500" />
         {isRenaming ? (
           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -322,11 +321,11 @@ export default function CloudDrive() {
   const { isLoaded, userId, isSignedIn } = useAuth();
   const { user } = useUser();
   const router = useRouter();
-  const [currentView, setCurrentView] = useState("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [currentPath, setCurrentPath] = useState("/");
+  const [currentPath, setCurrentPath] = useState("");
   const [files, setFiles] = useState<FileItem[]>([]);
   const [folders, setFolders] = useState<FolderItem[]>([]);
+  const [currentView, setCurrentView] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [newFolderModalOpen, setNewFolderModalOpen] = useState(false);
@@ -347,23 +346,53 @@ export default function CloudDrive() {
     }
   }, [isLoaded, isSignedIn, router]);
 
-  // Load files and folders when path changes or view changes
   useEffect(() => {
-    if (isSignedIn && userId) {
+    if (isSignedIn && userId && currentPath !== "") {
       fetchFilesAndFolders();
     }
   }, [isSignedIn, userId, currentPath, currentView]);
 
+  // Load files and folders when path changes or view changes
+  useEffect(() => {
+    if (isLoaded && isSignedIn && userId && currentPath === "") {
+      initializeUserDrive();
+    }
+  }, [isLoaded, isSignedIn, userId, currentPath]);
+
+  const initializeUserDrive = async () => {
+    setIsLoading(true);
+    try {
+      // 调用初始化API，检查和创建用户文件夹
+      const response = await fetch('/api/initialize');
+      if (!response.ok) throw new Error('Failed to initialize user drive');
+      
+      const { rootFolderId } = await response.json();
+      
+      // 设置当前路径为根路径，意味着我们在用户的主文件夹中
+      setCurrentPath('/');
+      
+      // 获取文件和文件夹
+      fetchFilesAndFolders();
+    } catch (error) {
+      console.error('Error initializing user drive:', error);
+      toast({
+        title: "Initialization Error",
+        description: "Failed to setup your cloud drive. Please try again.",
+        variant: "destructive"
+      });
+    }
+  };
+
   const fetchFilesAndFolders = async () => {
     setIsLoading(true);
     try {
-      // 直接传递客户端路径，后端会处理完整路径
-      const response = await fetch(`/api/files?path=${encodeURIComponent(currentPath)}&view=${currentView}`);
+      // 获取当前路径下的文件和文件夹
+      const response = await fetch(`/api/files?view=${currentView}`);
       if (!response.ok) throw new Error('Failed to fetch files');
       
       const data = await response.json();
       
-      // 处理数据相同
+      // 处理视图过滤
       if (currentView === 'images') {
         setFiles(data.files.filter((file: FileItem) => file.type.startsWith('image/')));
         setFolders([]);
@@ -420,21 +449,8 @@ export default function CloudDrive() {
       files.forEach(file => {
         formData.append('files', file);
       });
-      
-      // Ensure uploads use the correct bucket path
-      formData.append('path', `bucket/${userId}${currentPath}`);
-      
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Upload failed');
-      }
-      
-      fetchFilesAndFolders();
+
+      formData.append('path', currentPath);
     } catch (error) {
       console.error('Error uploading files:', error);
     } finally {
@@ -604,18 +620,58 @@ export default function CloudDrive() {
     */
   };
 
-  const handleNavigate = (path: string) => {
-    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-    setCurrentPath(normalizedPath);
+  const handleNavigate = async (folderId: string) => {
+    setIsLoading(true);
+    try {
+      // 调用API获取文件夹内容，传递文件夹ID
+      const response = await fetch(`/api/files?folderId=${folderId}&view=${currentView}`);
+      if (!response.ok) throw new Error('Failed to navigate to folder');
+      
+      const data = await response.json();
+      
+      // 更新当前路径
+      setCurrentPath(data.currentPath);
+      
+      // 更新文件和文件夹列表
+      if (currentView === 'images') {
+        setFiles(data.files.filter((file: FileItem) => file.type.startsWith('image/')));
+        setFolders([]);
+      } else {
+        setFiles(data.files || []);
+        setFolders(data.folders || []);
+      }
+    } catch (error) {
+      console.error('Error navigating to folder:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const navigateUp = () => {
-    if (currentPath === '/') return;
-    
-    const parts = currentPath.split('/').filter(Boolean);
-    parts.pop();
-    const newPath = parts.length === 0 ? '/' : `/${parts.join('/')}`;
-    setCurrentPath(newPath);
+  const navigateUp = async () => {
+    setIsLoading(true);
+    try {
+      // 调用API获取父文件夹内容
+      const response = await fetch(`/api/files?navigateUp=true&view=${currentView}`);
+      if (!response.ok) throw new Error('Failed to navigate up');
+      
+      const data = await response.json();
+      
+      // 更新当前路径
+      setCurrentPath(data.currentPath);
+      
+      // 更新文件和文件夹列表
+      if (currentView === 'images') {
+        setFiles(data.files.filter((file: FileItem) => file.type.startsWith('image/')));
+        setFolders([]);
+      } else {
+        setFiles(data.files || []);
+        setFolders(data.folders || []);
+      }
+    } catch (error) {
+      console.error('Error navigating up:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // Get breadcrumb paths
