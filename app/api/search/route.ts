@@ -2,6 +2,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 
+interface MisskeyFile {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  createdAt: string;
+  url: string;
+  thumbnailUrl: string;
+}
+
+interface MisskeyFolder {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth();
@@ -59,7 +75,7 @@ export async function GET(request: NextRequest) {
     }));
 
     // For searching folders, you might need another API call
-    const folders = []; // Populate from Misskey folder search API if available
+    const folders: MisskeyFolder[] = []; // Populate from Misskey folder search API if available
 
     return NextResponse.json({ files, folders });
   } catch (error: any) {

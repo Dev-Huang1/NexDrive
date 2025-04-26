@@ -2,6 +2,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 
+interface MisskeyFile {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+  createdAt: string;
+  url: string;
+  thumbnailUrl: string;
+}
+
+interface MisskeyFolder {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
 // Utility function to get files from Misskey
 async function getFilesFromMisskey(path: string, view: string = 'all') {
   const baseUrl = process.env.MISSKEY_BASE_URL;
@@ -67,7 +83,7 @@ export async function GET(request: NextRequest) {
 
     // For folders, you might need another API call to Misskey
     // This is a placeholder
-    const folders = []; // Populate from Misskey folder API
+    const folders: MisskeyFolder[] = []; // Populate from Misskey folder API
 
     return NextResponse.json({ files, folders });
   } catch (error: any) {
@@ -79,7 +95,7 @@ export async function GET(request: NextRequest) {
 // DELETE handler to remove a file
 export async function DELETE(request: NextRequest) {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
 
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -121,7 +137,7 @@ export async function DELETE(request: NextRequest) {
 // PATCH handler to rename a file
 export async function PATCH(request: NextRequest) {
   try {
-    const { userId } = auth();
+    const { userId } = await auth();
 
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
