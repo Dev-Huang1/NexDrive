@@ -59,7 +59,8 @@ function NavItem({ href, icon, children, active }: {
   href: string; 
   icon: React.ReactNode; 
   children: React.ReactNode; 
-  active?: boolean 
+  active?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <Link
