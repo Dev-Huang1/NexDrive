@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { useAuth } from "@clerk/nextjs"
+import { useAuth, useUser, SignOutButton } from "@clerk/nextjs"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -18,7 +18,8 @@ import {
   Image as ImageIcon, 
   File, 
   MoreVertical, 
-  Loader2 
+  Loader2,
+  LogOut
 } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
@@ -55,7 +56,7 @@ interface FolderItem {
   path: string;
 }
 
-function NavItem({ href, icon, children, active }: { 
+function NavItem({ href, icon, children, active, onClick }: { 
   href: string; 
   icon: React.ReactNode; 
   children: React.ReactNode; 
@@ -66,6 +67,7 @@ function NavItem({ href, icon, children, active }: {
     <Link
       href={href}
       className={cn("flex items-center gap-2 px-3 py-2 text-sm text-gray-700 rounded-lg", active && "bg-gray-100")}
+      onClick={onClick}
     >
       {icon}
       <span>{children}</span>
@@ -226,6 +228,7 @@ function ImageCard({ file, onDelete, onRename }: {
 
 export default function CloudDrive() {
   const { isLoaded, userId, isSignedIn } = useAuth();
+  const { user } = useUser();
   const router = useRouter();
   const [currentView, setCurrentView] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -245,7 +248,7 @@ export default function CloudDrive() {
     }
   }, [isLoaded, isSignedIn, router]);
 
-  // Load files and folders when path changes
+  // Load files and folders when path changes or view changes
   useEffect(() => {
     if (isSignedIn && userId) {
       fetchFilesAndFolders();
@@ -255,8 +258,8 @@ export default function CloudDrive() {
   const fetchFilesAndFolders = async () => {
     setIsLoading(true);
     try {
-      // Add base path for user bucket
-      const bucketPath = `bucket/${userId}${currentPath}`;
+      // Ensure we're using the correct bucket path structure
+      const bucketPath = `bucket/${userId}${currentPath === '/' ? '/' : currentPath}`;
       
       // Fetch data from API
       const response = await fetch(`/api/files?path=${encodeURIComponent(bucketPath)}&view=${currentView}`);
@@ -264,8 +267,16 @@ export default function CloudDrive() {
       
       const data = await response.json();
       
-      setFiles(data.files || []);
-      setFolders(data.folders || []);
+      // Make sure we handle file filtering correctly
+      if (currentView === 'images') {
+        // In images view, only show images
+        setFiles(data.files.filter((file: FileItem) => file.type.startsWith('image/')));
+        setFolders([]); // No folders in image view
+      } else {
+        // In all files view, show everything
+        setFiles(data.files || []);
+        setFolders(data.folders || []);
+      }
     } catch (error) {
       console.error('Error fetching files:', error);
     } finally {
@@ -281,14 +292,22 @@ export default function CloudDrive() {
     
     setIsLoading(true);
     try {
+      // Ensure search queries use the correct bucket path
       const bucketPath = `bucket/${userId}`;
       const response = await fetch(`/api/search?path=${encodeURIComponent(bucketPath)}&query=${encodeURIComponent(searchQuery)}&view=${currentView}`);
       
       if (!response.ok) throw new Error('Search failed');
       
       const data = await response.json();
-      setFiles(data.files || []);
-      setFolders(data.folders || []);
+      
+      // Apply the view filter to search results
+      if (currentView === 'images') {
+        setFiles(data.files.filter((file: FileItem) => file.type.startsWith('image/')));
+        setFolders([]);
+      } else {
+        setFiles(data.files || []);
+        setFolders(data.folders || []);
+      }
     } catch (error) {
       console.error('Error searching:', error);
     } finally {
@@ -308,6 +327,7 @@ export default function CloudDrive() {
         formData.append('files', file);
       });
       
+      // Ensure uploads use the correct bucket path
       formData.append('path', `bucket/${userId}${currentPath}`);
       
       const response = await fetch('/api/upload', {
@@ -315,7 +335,10 @@ export default function CloudDrive() {
         body: formData,
       });
       
-      if (!response.ok) throw new Error('Upload failed');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Upload failed');
+      }
       
       fetchFilesAndFolders();
     } catch (error) {
@@ -330,6 +353,7 @@ export default function CloudDrive() {
     if (!newFolderName.trim()) return;
     
     try {
+      // Ensure folder creation uses the correct bucket path
       const response = await fetch('/api/folders', {
         method: 'POST',
         headers: {
@@ -341,7 +365,10 @@ export default function CloudDrive() {
         }),
       });
       
-      if (!response.ok) throw new Error('Failed to create folder');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create folder');
+      }
       
       setNewFolderName("");
       setNewFolderModalOpen(false);
@@ -359,7 +386,10 @@ export default function CloudDrive() {
         method: 'DELETE',
       });
       
-      if (!response.ok) throw new Error('Failed to delete file');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to delete file');
+      }
       
       fetchFilesAndFolders();
     } catch (error) {
@@ -380,7 +410,10 @@ export default function CloudDrive() {
         }),
       });
       
-      if (!response.ok) throw new Error('Failed to rename file');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to rename file');
+      }
       
       fetchFilesAndFolders();
     } catch (error) {
@@ -418,6 +451,14 @@ export default function CloudDrive() {
     return crumbs;
   };
 
+  const handleViewChange = (view: string) => {
+    setCurrentView(view);
+    // Reset to root when switching views
+    if (view === 'images') {
+      setCurrentPath('/');
+    }
+  };
+
   if (!isLoaded || !isSignedIn) {
     return <div className="flex h-screen items-center justify-center">
       <Loader2 className="h-8 w-8 animate-spin" />
@@ -436,7 +477,7 @@ export default function CloudDrive() {
             href="#" 
             icon={<File className="h-4 w-4" />} 
             active={currentView === "all"}
-            onClick={() => setCurrentView("all")}
+            onClick={() => handleViewChange("all")}
           >
             All Files
           </NavItem>
@@ -444,7 +485,7 @@ export default function CloudDrive() {
             href="#" 
             icon={<ImageIcon className="h-4 w-4" />}
             active={currentView === "images"}
-            onClick={() => setCurrentView("images")}
+            onClick={() => handleViewChange("images")}
           >
             Images
           </NavItem>
@@ -474,15 +515,41 @@ export default function CloudDrive() {
             <Button variant="ghost" size="icon">
               <Bell className="h-4 w-4" />
             </Button>
-            <div className="h-8 w-8 overflow-hidden rounded-full">
-              <Image
-                src="/placeholder.svg"
-                alt="Avatar"
-                width={32}
-                height={32}
-                className="h-full w-full object-cover"
-              />
-            </div>
+            
+            {/* User avatar dropdown with sign out */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 p-0 overflow-hidden">
+                  {user?.imageUrl ? (
+                    <Image
+                      src={user.imageUrl}
+                      alt="Avatar"
+                      width={32}
+                      height={32}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center bg-primary text-primary-foreground">
+                      {user?.firstName?.[0] || user?.username?.[0] || '?'}
+                    </div>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <div className="flex items-center gap-2 p-2">
+                  <div className="font-medium">
+                    {user?.fullName || user?.username}
+                  </div>
+                </div>
+                <DropdownMenuSeparator />
+                <SignOutButton>
+                  <DropdownMenuItem>
+                    <LogOut className="h-4 w-4 mr-2" />
+                    Sign out
+                  </DropdownMenuItem>
+                </SignOutButton>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
@@ -545,26 +612,28 @@ export default function CloudDrive() {
             </Dialog>
           </div>
 
-          {/* Breadcrumb navigation */}
-          <div className="flex items-center gap-2 mb-6">
-            {getBreadcrumbs().map((crumb, index, array) => (
-              <div key={crumb.path} className="flex items-center">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="p-1 h-auto text-blue-600 hover:text-blue-800"
-                  onClick={() => handleNavigate(crumb.path)}
-                >
-                  {crumb.name}
-                </Button>
-                {index < array.length - 1 && <span className="mx-1">/</span>}
-              </div>
-            ))}
-          </div>
+          {/* Breadcrumb navigation (only show in All Files view) */}
+          {currentView === 'all' && (
+            <div className="flex items-center gap-2 mb-6">
+              {getBreadcrumbs().map((crumb, index, array) => (
+                <div key={crumb.path} className="flex items-center">
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    className="p-1 h-auto text-blue-600 hover:text-blue-800"
+                    onClick={() => handleNavigate(crumb.path)}
+                  >
+                    {crumb.name}
+                  </Button>
+                  {index < array.length - 1 && <span className="mx-1">/</span>}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* View selector */}
           <div className="mb-6">
-            <Tabs value={currentView} onValueChange={setCurrentView}>
+            <Tabs value={currentView} onValueChange={handleViewChange}>
               <TabsList>
                 <TabsTrigger value="all">All Files</TabsTrigger>
                 <TabsTrigger value="images">Images</TabsTrigger>
