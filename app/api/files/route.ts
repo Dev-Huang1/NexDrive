@@ -28,12 +28,35 @@ interface DriveSession {
   folderHistory: { id: string; name: string }[];
 }
 
-export async function GET(request: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const { userId } = await auth();
 
     if (!userId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const formData = await request.formData();
+    const files = formData.getAll('files') as File[];
+    
+    // 从cookie中获取当前文件夹ID
+    const cookieHeader = request.headers.get('cookie') || '';
+    const cookies = parseCookies(cookieHeader);
+    const sessionValue = cookies['drive-session'];
+    
+    let currentFolderId: string;
+    
+    if (!sessionValue) {
+      // 如果没有会话，获取用户根文件夹ID
+      currentFolderId = await getUserRootFolderId(userId);
+    } else {
+      try {
+        const session = JSON.parse(sessionValue) as DriveSession;
+        currentFolderId = session.currentFolderId;
+      } catch (e) {
+        // 如果解析失败，获取用户根文件夹ID
+        currentFolderId = await getUserRootFolderId(userId);
+      }
     }
 
     const baseUrl = process.env.MISSKEY_BASE_URL;
@@ -43,104 +66,51 @@ export async function GET(request: NextRequest) {
       throw new Error('Misskey configuration missing');
     }
 
-    const cookieStore = cookies();
-    const sessionCookie = cookieStore.get('drive-session');
-    
-    // 获取查询参数
-    const searchParams = request.nextUrl.searchParams;
-    const view = searchParams.get('view') || 'all';
-    const folderId = searchParams.get('folderId');
-    const navigateUp = searchParams.get('navigateUp') === 'true';
-    
-    let session: DriveSession;
-    
-    // 如果没有会话，初始化一个新会话
-    if (!sessionCookie) {
-      // 获取用户根文件夹ID
-      const rootFolderId = await getUserRootFolderId(userId);
-      
-      // 初始化会话
-      session = {
-        currentFolderId: rootFolderId,
-        folderPath: '/',
-        folderHistory: [{ id: rootFolderId, name: 'Home' }]
-      };
-    } else {
-      session = JSON.parse(sessionCookie.value) as DriveSession;
-    }
-    
-    // 如果指定了文件夹ID，更新当前文件夹
-    if (folderId) {
-      // 获取文件夹信息
-      const folderInfo = await getFolderInfo(folderId);
-      
-      // 更新会话
-      session.currentFolderId = folderId;
-      session.folderPath = session.folderPath === '/' 
-        ? `/${folderInfo.name}` 
-        : `${session.folderPath}/${folderInfo.name}`;
-      session.folderHistory.push({ id: folderId, name: folderInfo.name });
-    }
-    
-    // 如果需要导航到上级
-    if (navigateUp && session.folderHistory.length > 1) {
-      // 移除当前文件夹
-      session.folderHistory.pop();
-      
-      // 设置当前文件夹为历史中的最后一个
-      const parentFolder = session.folderHistory[session.folderHistory.length - 1];
-      session.currentFolderId = parentFolder.id;
-      
-      // 更新路径
-      if (session.folderHistory.length === 1) {
-        session.folderPath = '/';
-      } else {
-        // 从路径中移除最后一个文件夹名
-        const pathParts = session.folderPath.split('/').filter(Boolean);
-        pathParts.pop();
-        session.folderPath = '/' + pathParts.join('/');
+    const uploadResults: MisskeyFileUploadResult[] = [];
+
+    for (const file of files) {
+      // 为每个文件创建一个新的FormData
+      const fileFormData = new FormData();
+      fileFormData.append('i', token);
+      fileFormData.append('file', file);
+      fileFormData.append('folderId', currentFolderId);
+
+      // 上传到Misskey
+      const response = await fetch(`${baseUrl}/api/drive/files/create`, {
+        method: 'POST',
+        body: fileFormData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to upload file ${file.name}: ${response.statusText}`);
       }
+
+      const result = await response.json() as MisskeyFileUploadResult;
+      uploadResults.push(result);
     }
-    
-    // 保存会话状态到cookie
-    cookieStore.set('drive-session', JSON.stringify(session), {
-      path: '/',
-      maxAge: 24 * 60 * 60, // 1天
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production'
-    });
-    
-    // 获取当前文件夹的文件和子文件夹
-    const files = await getFolderFiles(session.currentFolderId);
-    const folders = await getFolderSubfolders(session.currentFolderId);
-    
-    // 格式化响应数据
-    const formattedFiles = files.map(file => ({
-      id: file.id,
-      name: file.name,
-      type: file.type,
-      size: file.size,
-      createdAt: file.createdAt,
-      url: file.url,
-      thumbnailUrl: file.thumbnailUrl
-    }));
-    
-    const formattedFolders = folders.map(folder => ({
-      id: folder.id,
-      name: folder.name,
-      path: folder.name // 客户端会使用这个ID调用API来导航
-    }));
-    
-    return NextResponse.json({
-      files: formattedFiles,
-      folders: formattedFolders,
-      currentPath: session.folderPath
-    });
+
+    return NextResponse.json({ success: true, files: uploadResults });
   } catch (error) {
-    console.error('Error fetching files:', error);
+    console.error('Error uploading files:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
+}
+
+// 解析cookie字符串的辅助函数
+function parseCookies(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  
+  if (!cookieHeader) return cookies;
+  
+  cookieHeader.split(';').forEach(cookie => {
+    const [name, value] = cookie.trim().split('=');
+    if (name && value) {
+      cookies[name] = decodeURIComponent(value);
+    }
+  });
+  
+  return cookies;
 }
 
 // 获取用户根文件夹ID (bucket/userId)

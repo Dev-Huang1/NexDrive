@@ -32,15 +32,24 @@ export async function POST(request: NextRequest) {
     const files = formData.getAll('files') as File[];
     
     // 从cookie中获取当前文件夹ID
-    const cookieStore = cookies();
-    const sessionCookie = cookieStore.get('drive-session');
+    const cookieHeader = request.headers.get('cookie') || '';
+    const cookies = parseCookies(cookieHeader);
+    const sessionValue = cookies['drive-session'];
     
-    if (!sessionCookie) {
-      return NextResponse.json({ error: 'Session not found' }, { status: 400 });
+    let currentFolderId: string;
+    
+    if (!sessionValue) {
+      // 如果没有会话，获取用户根文件夹ID
+      currentFolderId = await getUserRootFolderId(userId);
+    } else {
+      try {
+        const session = JSON.parse(sessionValue) as DriveSession;
+        currentFolderId = session.currentFolderId;
+      } catch (e) {
+        // 如果解析失败，获取用户根文件夹ID
+        currentFolderId = await getUserRootFolderId(userId);
+      }
     }
-    
-    const session = JSON.parse(sessionCookie.value) as DriveSession;
-    const currentFolderId = session.currentFolderId;
 
     const baseUrl = process.env.MISSKEY_BASE_URL;
     const token = process.env.MISSKEY_TOKEN;
@@ -78,6 +87,22 @@ export async function POST(request: NextRequest) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
+}
+
+// 解析cookie字符串的辅助函数
+function parseCookies(cookieHeader: string): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  
+  if (!cookieHeader) return cookies;
+  
+  cookieHeader.split(';').forEach(cookie => {
+    const [name, value] = cookie.trim().split('=');
+    if (name && value) {
+      cookies[name] = decodeURIComponent(value);
+    }
+  });
+  
+  return cookies;
 }
 
 // 根据路径获取文件夹ID的辅助函数
